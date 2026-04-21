@@ -9,11 +9,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
-import io.opentelemetry.android.instrumentation.view.click.internal.APP_SCREEN_CLICK_EVENT_NAME
-import io.opentelemetry.android.instrumentation.view.click.internal.VIEW_CLICK_EVENT_NAME
-import io.opentelemetry.api.common.Attributes
-import io.opentelemetry.api.logs.LogRecordBuilder
-import io.opentelemetry.api.logs.Logger
+import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.semconv.incubating.AppIncubatingAttributes.APP_SCREEN_COORDINATE_X
 import io.opentelemetry.semconv.incubating.AppIncubatingAttributes.APP_SCREEN_COORDINATE_Y
 import io.opentelemetry.semconv.incubating.AppIncubatingAttributes.APP_WIDGET_ID
@@ -22,7 +18,8 @@ import java.lang.ref.WeakReference
 import java.util.LinkedList
 
 internal class ViewClickEventGenerator(
-    private val eventLogger: Logger,
+   // private val eventLogger: Logger,
+    private val tracer: Tracer
 ) {
     private var windowRef: WeakReference<Window>? = null
 
@@ -37,15 +34,21 @@ internal class ViewClickEventGenerator(
     fun generateClick(motionEvent: MotionEvent?) {
         windowRef?.get()?.let { window ->
             if (motionEvent != null && motionEvent.actionMasked == MotionEvent.ACTION_UP) {
-                createEvent(APP_SCREEN_CLICK_EVENT_NAME)
-                    .setAttribute(APP_SCREEN_COORDINATE_Y, motionEvent.y.toLong())
-                    .setAttribute(APP_SCREEN_COORDINATE_X, motionEvent.x.toLong())
-                    .emit()
-
                 findTargetForTap(window.decorView, motionEvent.x, motionEvent.y)?.let { view ->
-                    createEvent(VIEW_CLICK_EVENT_NAME)
-                        .setAllAttributes(createViewAttributes(view))
-                        .emit()
+                    val span = tracer.spanBuilder("ui.click")
+                        .setAttribute(APP_WIDGET_ID, view.id.toString())
+                        .setAttribute(APP_WIDGET_NAME, viewToName(view))
+                        .setAttribute(APP_SCREEN_COORDINATE_X, view.x.toLong())
+                        .setAttribute(APP_SCREEN_COORDINATE_Y, view.y.toLong())
+                        .setAttribute("view.label", viewToLabel(view))
+                        .startSpan()
+
+                    val scope = span.makeCurrent()
+
+                    java.util.concurrent.Executors.newSingleThreadScheduledExecutor().schedule({
+                        scope.close()
+                        span.end()
+                    }, 5, java.util.concurrent.TimeUnit.SECONDS)
                 }
             }
         }
@@ -60,20 +63,20 @@ internal class ViewClickEventGenerator(
         windowRef = null
     }
 
-    private fun createEvent(name: String): LogRecordBuilder =
-        eventLogger
-            .logRecordBuilder()
-            .setEventName(name)
+//    private fun createEvent(name: String): LogRecordBuilder =
+//        eventLogger
+//            .logRecordBuilder()
+//            .setEventName(name)
 
-    private fun createViewAttributes(view: View): Attributes {
-        val builder = Attributes.builder()
-        builder.put(APP_WIDGET_NAME, viewToName(view))
-        builder.put(APP_WIDGET_ID, view.id.toString())
-
-        builder.put(APP_SCREEN_COORDINATE_X, view.x.toLong())
-        builder.put(APP_SCREEN_COORDINATE_Y, view.y.toLong())
-        return builder.build()
-    }
+//    private fun createViewAttributes(view: View): Attributes {
+//        val builder = Attributes.builder()
+//        builder.put(APP_WIDGET_NAME, viewToName(view))
+//        builder.put(APP_WIDGET_ID, view.id.toString())
+//
+//        builder.put(APP_SCREEN_COORDINATE_X, view.x.toLong())
+//        builder.put(APP_SCREEN_COORDINATE_Y, view.y.toLong())
+//        return builder.build()
+//    }
 
     private fun viewToName(view: View): String =
         try {
@@ -82,6 +85,15 @@ internal class ViewClickEventGenerator(
             view.id.toString()
         }
 
+    private fun viewToLabel(view: View): String {
+        val contentDescription = view.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+        if (contentDescription != null) return contentDescription
+
+        val text = (view as? android.widget.TextView)?.text?.toString()?.takeIf { it.isNotBlank() }
+        if (text != null) return text
+
+        return view.javaClass.simpleName
+    }
     private fun findTargetForTap(
         decorView: View,
         x: Float,

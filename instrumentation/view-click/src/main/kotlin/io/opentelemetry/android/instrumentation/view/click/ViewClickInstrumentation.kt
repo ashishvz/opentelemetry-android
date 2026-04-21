@@ -18,9 +18,11 @@ class ViewClickInstrumentation : AndroidInstrumentation {
             ViewClickActivityCallback(
                 ViewClickEventGenerator(
                     ctx.openTelemetry
-                        .logsBridge
-                        .loggerBuilder("io.opentelemetry.android.instrumentation.view.click")
+                        .tracerProvider
+                        .tracerBuilder("io.opentelemetry.android.instrumentation.view.click")
                         .build(),
+//                        .loggerBuilder("io.opentelemetry.android.instrumentation.view.click")
+//                        .build(),
                 ),
             ),
         )
